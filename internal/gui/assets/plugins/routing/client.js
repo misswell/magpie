@@ -1883,6 +1883,9 @@ function routingPage(part) {
   let wanted = document.body.classList.contains("window") && Number(params.get("req")) || 0;
   let cur = null;           // the route the header and the log tell of: the newest played
   let pinned = null;        // a past route picked from the strip
+  // the agent node clicked, by srcOf: the stage and the requests below show
+  // its routes and requests alone; null shows every agent
+  let only = null;
   let rows = new Map();     // id → { li, wire, st, bi, tg, w, rid, up }
   // a request's session, and what its agent's own files name it: the
   // list's session heads and the stage's rows read them, the stage from
@@ -2670,6 +2673,12 @@ function routingPage(part) {
     const out = rs.filter((r) => playing.has(r.id) || (last.get(srcOf(r)) === r && (!r.done || at(r.time) + (r.ms || 0) > n - LINGER)));
     const c = cur && map.get(cur.id);
     if (c && !out.includes(c)) out.push(c);
+    // one agent's routes alone: its node was clicked. Its last request stays
+    // while it is the agent's own, so the node it was clicked on doesn't go
+    if (only) {
+      const mine = out.filter((r) => srcOf(r) === only);
+      return (mine.length ? mine : rs.filter((r) => srcOf(r) === only).slice(-1)).sort((a, b) => a.id - b.id);
+    }
     const ags = [...new Set(out.map(srcOf))].slice(-4);
     return out.filter((r) => ags.includes(srcOf(r))).sort((a, b) => a.id - b.id);
   }
@@ -2717,6 +2726,13 @@ function routingPage(part) {
     if (a) return a;
     const node = el("div", "rt-node rt-src"), ic = el("span", "rt-ic"), name = el("b"), sub = el("small");
     node.append(ic, name, sub);
+    // the empty agent of an empty stage has nothing to narrow to
+    if (id) {
+      node.tabIndex = 0;
+      node.setAttribute("role", "button");
+      node.onclick = (e) => { e.stopPropagation(); showOnly(id); };
+      node.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); showOnly(id); } };
+    }
     a = { node, ic, name, sub, wire: path() };
     node.style.setProperty("--agent", hueOf(id));
     a.wire.style.setProperty("--agent", hueOf(id));
@@ -2898,7 +2914,7 @@ function routingPage(part) {
     if (!shown()) return;
     const rs = staged();
     if (!rs.length) return;
-    const from = () => [cur, pinned, day, rp, purpose.join(), document.documentElement.lang, ...rs,
+    const from = () => [cur, pinned, only, day, rp, purpose.join(), document.documentElement.lang, ...rs,
       ...rs.flatMap((r) => [...r.order, ...(r.left || [])].map(who))];
     const now = from(), same = now.length === builtFrom.length && now.every((x, i) => x === builtFrom[i]);
     if (force === "back" ? !same : force) steady(() => rebuild(rs, true));
@@ -2933,7 +2949,11 @@ function routingPage(part) {
       const a = agents.get(id), r = rs.filter((x) => srcOf(x) === id).pop(), ag = agentOf(r.agent);
       for (const n of [a.node, a.wire]) n.style.setProperty("--agent", hueOf(id));
       if (a.icon !== (ag?.icon || "generic")) { a.icon = ag?.icon || "generic"; a.ic.replaceChildren(icon(a.icon)); }
-      setText(a.name, callerName(r));
+      const cn = callerName(r), on = only === id;
+      setText(a.name, cn);
+      a.node.classList.toggle("on", on);
+      setAttr(a.node, "aria-pressed", String(on));
+      setAttr(a.node, "aria-label", t("Show only {agent}'s routes and requests", { agent: cn }));
       // one agent working in more than one folder at once: which, by
       // their last level (#1068). The stage holds an agent's latest
       // request alone, so its others still going, or just done, count too.
@@ -2941,7 +2961,8 @@ function routingPage(part) {
       const fs = foldersOf([...new Set([...going, ...rs.filter((x) => srcOf(x) === id)])].sort((x, y) => x.id - y.id));
       // told again every second (countdown): only what changed is written
       setText(a.sub, fs.length > 1 ? fs.map(lastLevel).join(", ") : r.model);
-      const tip = [...callerLines(r), r.model, ...fs.map((f) => t("Folder") + ": " + f)].join("\n");
+      const hint = t(on ? "Showing only {agent}'s routes and requests · click the empty space to show every agent" : "Show only {agent}'s routes and requests", { agent: cn });
+      const tip = [...callerLines(r), r.model, ...fs.map((f) => t("Folder") + ": " + f), hint].join("\n");
       if (a.node.title !== tip) a.node.title = tip;
     }
     // the account sets, the latest of each
@@ -3194,12 +3215,25 @@ function routingPage(part) {
       if (g) goRouting(e, g.dataset.go);
     });
     v?.addEventListener("keydown", (e) => {
+      // Escape lets go of the agent narrowed to, as the empty space does
+      if (e.key === "Escape" && only && e.target.closest?.("#rt")) {
+        e.preventDefault();
+        only = null;
+        followListed();
+        return;
+      }
       const g = (e.key === "Enter" || e.key === " ") && e.target.closest?.(".rt-go[data-go]");
       if (!g) return;
       e.preventDefault();
       goRouting(e, g.dataset.go);
     });
   }
+  // the empty space between the stage's agents and rows shows every agent again
+  stage.addEventListener("click", (e) => {
+    if (!only || e.target.closest(".rt-node, .rt-accts li, .rt-accts button, button, a, [role=button]")) return;
+    only = null;
+    followListed();
+  });
 
   // lightRow lights a row and its wire: on for the one answering or that
   // answered the request shown, now and a flowing wire only while a
@@ -4191,12 +4225,18 @@ function routingPage(part) {
     } catch {}
   }
   const matchesPurpose = (r) => !purpose.length || purpose.includes(purposeOf(r.kind));
-  const listed = () => allListed().filter(matchesPurpose);
+  const matchesOnly = (r) => !only || srcOf(r) === only;
+  const listed = () => allListed().filter((r) => matchesPurpose(r) && matchesOnly(r));
+  // onlyName: the agent the stage is narrowed to, as its node names it
+  const onlyName = () => {
+    const r = only && allListed().find((x) => srcOf(x) === only);
+    return r ? callerName(r) : only || "";
+  };
   // Match the rows and story: a broken-off 200 fails, an informational note
   // on an answered request (such as Codex titles being off) does not.
   const failedRoute = (r) => r.done && outcome(r)[1] === "bad";
   function renderStats(rs) {
-    const scoped = !!(day || purpose.length), done = rs.filter((r) => r.done);
+    const scoped = !!(day || purpose.length || only), done = rs.filter((r) => r.done);
     const counts = scoped ? {
       requests: done.length,
       rerouted: done.reduce((n, r) => n + r.tries.filter((tr, i) => tr.rest && i < r.tries.length - 1).length, 0),
@@ -4213,6 +4253,9 @@ function routingPage(part) {
   function followListed() {
     if (rp) endReplay(true);
     stopPlays();
+    // an agent whose requests the gateway no longer keeps has no node to
+    // narrow again: the filter goes with them
+    if (only && !(day ? past : [...routes.values()]).some((r) => srcOf(r) === only)) only = null;
     if (pinned && !listed().some((r) => r.id === pinned.id)) pinned = null;
     cur = pinned || newest();
     if (day) pinned = cur;
@@ -4220,6 +4263,20 @@ function routingPage(part) {
     if (cur) { sync(true); say(affWhy(cur, true) || ruleWhy(cur, true) || firstWhy(cur)); }
     else empty();
     renderAll();
+  }
+  // showOnly narrows the stage and the requests below to the agent whose
+  // node was clicked; the node again, the stage's empty space, or Escape
+  // shows every agent
+  function showOnly(id) {
+    only = only === id ? null : id;
+    if (only) pinned = null; // the newest of the agent's own, not a past one
+    followListed();
+    // the caption under the stage tells of this agent at once, not of the
+    // route it told of before the click
+    if (capQ.length) { show(capQ[capQ.length - 1]); capQ = []; }
+    else { cap.textContent = ""; cap.removeAttribute("title"); }
+    // the node is made again by the rebuild: keep the keyboard where it was
+    agents.get(id)?.node.focus({ preventScroll: true });
   }
   const dayName = (d) => {
     const x = new Date(d + "T12:00:00"), n = new Date(), y = new Date(n.getTime() - 864e5);
@@ -4525,8 +4582,11 @@ function routingPage(part) {
     setText(reqLabel, t("Requests"));
     setText(replayAll, t("Replay them all"));
     replayAll.hidden = !(rs.filter((r) => r.done).length > 1 && !rp);
-    setText(reqNote, day ? t(pastCut ? "the last {n} of {day}" : "{n} on {day}", { n: rs.length, day: dayName(day) })
-      : t("the last {n} the gateway keeps", { n: rs.length }));
+    setText(reqNote, day
+      ? only ? t("{n} from {agent} on {day}", { n: rs.length, agent: onlyName(), day: dayName(day) })
+        : t(pastCut ? "the last {n} of {day}" : "{n} on {day}", { n: rs.length, day: dayName(day) })
+      : only ? t("the last {n} from {agent}", { n: rs.length, agent: onlyName() })
+        : t("the last {n} the gateway keeps", { n: rs.length }));
     renderDays();
     const by = groupBy === "key" && !callerKeys.length ? "request" : groupBy;
     groupButtons.forEach((b) => {
@@ -4546,7 +4606,8 @@ function routingPage(part) {
     hist.classList.toggle("solo", none);
     if (none) {
       const p = el("div", "empty-state");
-      p.append(el("b", "", purpose.length ? t("No requests match these filters.") : day ? t("Nothing on {day}", { day: dayName(day) }) : t("No requests since magpie started")),
+      p.append(el("b", "", only ? t("No requests from {agent} here.", { agent: onlyName() })
+        : purpose.length ? t("No requests match these filters.") : day ? t("Nothing on {day}", { day: dayName(day) }) : t("No requests since magpie started")),
         t("Each request an agent sends through magpie shows up here: who answered it, why, and each try."));
       if (!day && days.length) p.append(" " + t("Earlier ones are kept by day, in the bar above."));
       reqs.replaceChildren(p);
@@ -5572,7 +5633,7 @@ function routingPage(part) {
     if (!shown()) return;
     render(); renderLog(); renderHist();
   }
-  const newest = () => (day ? past : [...routes.values()]).filter(matchesPurpose).reduce((a, b) => (!a || b.id > a.id ? b : a), null);
+  const newest = () => (day ? past : [...routes.values()]).filter((r) => matchesPurpose(r) && matchesOnly(r)).reduce((a, b) => (!a || b.id > a.id ? b : a), null);
   // told: the request the live card tells of. Following the newest, with
   // several agents or conversations sending at once, the card jumped from
   // one to the next on every update, and to "not routed yet" for each new
@@ -5581,7 +5642,7 @@ function routingPage(part) {
   // yet doesn't take it from one that was routed.
   function told() {
     const n = newest(), c = cur && !day && routes.get(cur.id);
-    if (!c || !n || c.id === n.id || !matchesPurpose(c)) return n;
+    if (!c || !n || c.id === n.id || !matchesPurpose(c) || !matchesOnly(c)) return n;
     if (!c.done) return c;
     return n.done || n.tries.length || !c.tries.length ? n : c;
   }
@@ -5960,7 +6021,7 @@ function routingPage(part) {
   // stale: it ends, the stage is drawn as it is now, and only the requests
   // still under way fly (#302).
   const LIVE = 4;
-  const underWay = () => pinned || day ? [] : [...src().values()].filter((r) => !r.done && matchesPurpose(r)).sort((a, b) => a.id - b.id).slice(-LIVE);
+  const underWay = () => pinned || day ? [] : [...src().values()].filter((r) => !r.done && matchesPurpose(r) && matchesOnly(r)).sort((a, b) => a.id - b.id).slice(-LIVE);
   function resume() {
     stopPlays();
     if (!loaded) return;
@@ -6069,7 +6130,8 @@ function routingPage(part) {
   function empty() {
     if (!shown()) return; // resume() empties it in sight, as sync
     offline("");
-    what.replaceChildren(el("b", "", t(purpose.length || day ? "No requests match these filters." : "Waiting for a request")));
+    what.replaceChildren(el("b", "", only ? t("No requests from {agent} here.", { agent: onlyName() })
+      : t(purpose.length || day ? "No requests match these filters." : "Waiting for a request")));
     mode.textContent = t("Send one from any agent routed through magpie and it plays here as it happens: who routing put first and why, each try, and what each answered.");
     for (const a of agents.values()) a.wire.remove();
     agents.clear();
@@ -6089,7 +6151,8 @@ function routingPage(part) {
     headOf = null;
     hubText();
     win = null; laid = []; gapOf = new Map();
-    list.replaceChildren(el("li", "idle", t(purpose.length || day ? "No requests match these filters." : "No request yet")));
+    list.replaceChildren(el("li", "idle", only ? t("No requests from {agent} here.", { agent: onlyName() })
+      : t(purpose.length || day ? "No requests match these filters." : "No request yet")));
     // the mode line above already says what plays here; a caption saying
     // it again was one more line to read (yujezhang on X, 11-10)
     capQ = [];

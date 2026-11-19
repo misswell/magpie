@@ -188,6 +188,20 @@ filter only when that request is excluded. Usage's purpose picker remains a
 single choice sent to the ledger API. See `purpose-filter.test.cjs` and
 `routing-purpose-state.test.cjs`.
 
+### Routing agent filter
+
+An agent's node on the Routing stage in
+[`plugins/routing/client.js`](../../internal/gui/assets/plugins/routing/client.js)
+narrows the page to that agent: clicked, the node is pressed in the agent's
+colour and stays on the stage with its routes, while the request list, its
+counts, the current story and a replay follow the same filter (`only`, matched
+by `srcOf`). An agent's last request stays staged while the agent has one, so
+the node clicked doesn't go. The node again, the stage's empty space, or Escape
+shows every agent again; so does a day or a trace that no longer has a request
+of that agent. It combines with the purpose filter, both must match, and
+changes neither the day, the request/session grouping nor anything saved. See
+`routing-agent-filter.test.cjs`.
+
 ### Routing group lookup caches
 
 The routing script's `groupIndexOf` in

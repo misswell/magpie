@@ -112,7 +112,8 @@ for (const engine of (process.env.BROWSER ? [process.env.BROWSER] : ["chromium",
         const node = page.locator(".rt-src").first();
         await page.waitForFunction(() => document.querySelector(".rt-src small")?.textContent.includes(","));
         assert.equal(await node.locator("small").textContent(), "magpie, dial");
-        assert.match(await node.getAttribute("title"), new RegExp(`${w.folder}: workspace/magpie\\n${w.folder}: src/dial$`));
+        // the folders end the listing; a line on what clicking the node does follows
+        assert.match(await node.getAttribute("title"), new RegExp(`${w.folder}: workspace/magpie\\n${w.folder}: src/dial\\n.+$`));
 
         const fit = await page.evaluate(() => ({ client: document.documentElement.clientWidth, scroll: document.documentElement.scrollWidth }));
         assert(fit.scroll <= fit.client + 1, `the page overflows at ${width}: ${JSON.stringify(fit)}`);
